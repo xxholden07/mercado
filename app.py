@@ -1,67 +1,90 @@
-# main.py
 import streamlit as st
 import pandas as pd
 from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-import time
+from webdriver_manager.chrome import ChromeDriverManager
+from time import sleep
+from bs4 import BeautifulSoup
+import tempfile
 
-# Configurar navegador headless
-def iniciar_navegador():
-    options = Options()
-    options.add_argument('--headless')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
-    return driver
+st.set_page_config(page_title="Tenda Atacado Bot", layout="wide")
+st.title("🛒 Bot de Compras - Tenda Atacado")
 
-def buscar_e_adicionar_item(driver, produto):
-    try:
-        driver.get("https://www.tendaatacado.com.br/")
-        time.sleep(3)
+uploaded_file = st.file_uploader("📤 Envie sua planilha de compras (CSV ou Excel)", type=["csv", "xlsx"])
 
-        barra_pesquisa = driver.find_element(By.NAME, "q")
-        barra_pesquisa.clear()
-        barra_pesquisa.send_keys(produto)
-        barra_pesquisa.send_keys(Keys.RETURN)
-        time.sleep(5)
-
-        primeiro_produto = driver.find_element(By.CSS_SELECTOR, "a.product-item-photo")
-        primeiro_produto.click()
-        time.sleep(5)
-
-        botao_comprar = driver.find_element(By.ID, "product-addtocart-button")
-        botao_comprar.click()
-        time.sleep(3)
-        return True
-
-    except Exception as e:
-        st.error(f"Erro ao adicionar '{produto}': {e}")
-        return False
-
-def main():
-    st.title("🛒 Carrinho Automático - Tenda Atacado")
-
-    uploaded_file = st.file_uploader("Envie sua planilha de compras (.xlsx):", type=["xlsx"])
-
-    if uploaded_file:
+if uploaded_file:
+    if uploaded_file.name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
         df = pd.read_excel(uploaded_file)
-        st.write("Itens encontrados:", df)
 
-        if st.button("Iniciar processo de compra"):
-            with st.spinner("Abrindo navegador..."):
-                driver = iniciar_navegador()
+    st.write("Itens na lista:", df)
 
-            for produto in df['Produto']:
-                with st.spinner(f"Adicionando: {produto}"):
-                    buscar_e_adicionar_item(driver, produto)
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--window-size=1920,1080")
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
 
-            st.success("Todos os produtos foram processados. Verifique o carrinho no site.")
-            driver.quit()
+    driver.get("https://www.tendaatacado.com.br/")
+    sleep(3)
 
-if __name__ == "__main__":
-    main()
+    selections = []
+
+    for index, row in df.iterrows():
+        termo = row["produto"]
+        st.subheader(f"🔍 Resultados para: {termo}")
+
+        search_box = driver.find_element(By.NAME, "q")
+        search_box.clear()
+        search_box.send_keys(termo)
+        search_box.submit()
+        sleep(5)
+
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        itens = soup.select(".product-item")
+
+        opcoes = []
+        for item in itens:
+            nome = item.select_one(".product-item__name")
+            preco = item.select_one(".sales") or item.select_one(".price")
+            link = item.select_one("a")
+
+            if nome and preco and link:
+                opcoes.append({
+                    "nome": nome.text.strip(),
+                    "preco": preco.text.strip(),
+                    "link": link["href"]
+                })
+
+        if not opcoes:
+            st.warning(f"Nenhum resultado encontrado para '{termo}'.")
+            continue
+
+        op_df = pd.DataFrame(opcoes)
+        escolha = st.selectbox(f"Escolha um item para '{termo}'", op_df["nome"].tolist(), key=termo)
+        quantidade = st.number_input(f"Quantidade para '{termo}'", min_value=1, step=1, key=f"qtd_{termo}")
+        selecionado = op_df[op_df["nome"] == escolha].iloc[0]
+        selecionado["quantidade"] = quantidade
+        selections.append(selecionado)
+
+    st.markdown("---")
+    if st.button("🛒 Adicionar ao carrinho"):
+        for item in selections:
+            driver.get(item["link"])
+            sleep(3)
+            try:
+                qtd_input = driver.find_element(By.NAME, "qty")
+                qtd_input.clear()
+                qtd_input.send_keys(str(item["quantidade"]))
+                add_btn = driver.find_element(By.CSS_SELECTOR, "button[title='Adicionar']")
+                add_btn.click()
+                sleep(2)
+            except Exception as e:
+                st.error(f"Erro ao adicionar '{item['nome']}': {e}")
+
+        st.success("Itens adicionados ao carrinho! Você pode finalizar manualmente no site.")
+        driver.quit()
