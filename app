@@ -1,75 +1,67 @@
+# main.py
 import streamlit as st
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.options import Options
 import time
-import os
 
-# ---------- CONFIG ----------
-UPLOAD_EXAMPLE = 'lista_compras_exemplo.xlsx'
-SITE_URL = 'https://www.tendaatacado.com.br/'
+# Configurar navegador headless
+def iniciar_navegador():
+    options = Options()
+    options.add_argument('--headless')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=options)
+    return driver
 
-# ---------- STREAMLIT UI ----------
-st.set_page_config(page_title="Bot de Compras - Tenda Atacado", layout="wide")
-st.title("🤖 Carrinho Automático - Tenda Atacado")
+def buscar_e_adicionar_item(driver, produto):
+    try:
+        driver.get("https://www.tendaatacado.com.br/")
+        time.sleep(3)
 
-st.markdown("Faça upload da sua lista de compras. Ela deve conter uma coluna chamada `produto`.")
+        barra_pesquisa = driver.find_element(By.NAME, "q")
+        barra_pesquisa.clear()
+        barra_pesquisa.send_keys(produto)
+        barra_pesquisa.send_keys(Keys.RETURN)
+        time.sleep(5)
 
-# Modelo de planilha exemplo
-with open(UPLOAD_EXAMPLE, "wb") as f:
-    f.write(b"produto\nArroz 5kg\nFeijao preto 1kg\nMacarrao espaguete\n")
-st.download_button("📄 Baixar modelo de planilha", data=open(UPLOAD_EXAMPLE, "rb"), file_name="modelo_lista_compras.xlsx")
+        primeiro_produto = driver.find_element(By.CSS_SELECTOR, "a.product-item-photo")
+        primeiro_produto.click()
+        time.sleep(5)
 
-file = st.file_uploader("📤 Envie sua planilha de compras (.xlsx)", type=["xlsx"])
+        botao_comprar = driver.find_element(By.ID, "product-addtocart-button")
+        botao_comprar.click()
+        time.sleep(3)
+        return True
 
-# ---------- FUNÇÃO DE BUSCA E ADIÇÃO AO CARRINHO ----------
-def adicionar_produtos_ao_carrinho(produtos):
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    
-    driver = webdriver.Chrome(options=chrome_options)
-    driver.get(SITE_URL)
-    time.sleep(3)
+    except Exception as e:
+        st.error(f"Erro ao adicionar '{produto}': {e}")
+        return False
 
-    for produto in produtos:
-        try:
-            search_box = driver.find_element(By.NAME, 'q')
-            search_box.clear()
-            search_box.send_keys(produto)
-            search_box.send_keys(Keys.ENTER)
-            time.sleep(2)
+def main():
+    st.title("🛒 Carrinho Automático - Tenda Atacado")
 
-            # Clica no primeiro produto encontrado
-            first_product = driver.find_element(By.CSS_SELECTOR, 'div.product-box')
-            first_product.click()
-            time.sleep(2)
+    uploaded_file = st.file_uploader("Envie sua planilha de compras (.xlsx):", type=["xlsx"])
 
-            # Adiciona ao carrinho
-            botao_comprar = driver.find_element(By.ID, 'buy-button')
-            botao_comprar.click()
-            time.sleep(2)
+    if uploaded_file:
+        df = pd.read_excel(uploaded_file)
+        st.write("Itens encontrados:", df)
 
-            st.success(f"✅ Produto adicionado: {produto}")
+        if st.button("Iniciar processo de compra"):
+            with st.spinner("Abrindo navegador..."):
+                driver = iniciar_navegador()
 
-            driver.get(SITE_URL)
-            time.sleep(2)
+            for produto in df['Produto']:
+                with st.spinner(f"Adicionando: {produto}"):
+                    buscar_e_adicionar_item(driver, produto)
 
-        except Exception as e:
-            st.warning(f"⚠️ Falha ao adicionar '{produto}': {e}")
+            st.success("Todos os produtos foram processados. Verifique o carrinho no site.")
+            driver.quit()
 
-    driver.quit()
-
-# ---------- LÓGICA PRINCIPAL ----------
-if file:
-    df = pd.read_excel(file)
-    if 'produto' not in df.columns:
-        st.error("❌ A planilha deve conter uma coluna chamada 'produto'.")
-    else:
-        st.write("🛒 Lista de produtos:", df)
-        if st.button("Iniciar busca e adicionar ao carrinho"):
-            produtos = df['produto'].dropna().tolist()
-            adicionar_produtos_ao_carrinho(produtos)
+if __name__ == "__main__":
+    main()
