@@ -1,6 +1,13 @@
-streamlit==1.32.0
-pandas==2.2.1
-openpyxl==3.1.2
-selenium==4.19.0
-webdriver-manager==4.0.1
-beautifulsoup4==4.12.3
+# Gerar um requirements.txt adequado para rodar o Streamlit Cloud sem abrir navegador visível
+requirements = """
+streamlit
+selenium
+pandas
+openpyxl
+webdriver-manager
+"""
+
+with open("/mnt/data/requirements.txt", "w") as f:
+    f.write(requirements.strip())
+
+"/mnt/data/requirements.txt"
